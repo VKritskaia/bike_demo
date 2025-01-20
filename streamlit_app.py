@@ -24,8 +24,8 @@ category_set_correct = {
 @st.cache_resource
 def load_model():
     cfg = get_cfg()
-    cfg.merge_from_file("/workspaces/product_assessment_demo/models/frame_custom_dataset.yaml")  # Update with your config file path
-    cfg.MODEL.WEIGHTS = "/workspaces/product_assessment_demo/models/frame_model_final.pth"
+    cfg.merge_from_file("/workspaces/bike_demo/models/frame_custom_dataset.yaml")  # Update with your config file path
+    cfg.MODEL.WEIGHTS = "/workspaces/bike_demo/models/frame_model_final.pth"
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for predictions
     cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # Use GPU if available
     return DefaultPredictor(cfg)
