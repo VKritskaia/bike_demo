@@ -44,9 +44,9 @@ def load_models(folder_path):
 
 models = load_models(MODEL_FOLDER)
 
-if not models:
-    st.error("No models found in the specified folder.")
-    st.stop()
+# if not models:
+#     st.error("No models found in the specified folder.")
+#     st.stop()
 
 # File uploader
 uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
@@ -85,6 +85,7 @@ if uploaded_file:
             # Map class to custom category
             category_mapping = list(category_set_correct.keys())[best_class]
 
+            st.write(model_name, instances.pred_boxes)
             # Add the best prediction details to the list
             predictions.append({
                 "model_name": model_name,
