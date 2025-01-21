@@ -1,36 +1,53 @@
+import os
 import streamlit as st
+from detectron2.config import get_cfg
+from detectron2.engine import DefaultPredictor
+from detectron2.utils.visualizer import Visualizer
+import numpy as np
 from PIL import Image
 import torch
-from detectron2.engine import DefaultPredictor
-from detectron2.config import get_cfg
-from detectron2.utils.visualizer import Visualizer
-# from detectron2.data import MetadataCatalog
-import numpy as np
-import cv2
+import pandas as pd
 
-# Streamlit App
-st.title("Bike Assessment Demo")
-st.write("Upload an image to see object detection in action!")
+# Streamlit App Title
+st.title("Visual Product Assessment")
+st.write("Upload an image to see predictions from all models!")
 
-# Category Mapping Dictionary
+# Updated Category Mapping Dictionary
 category_set_correct = {
-    "FRAME_EXCELLENT": 4,
-    "FRAME_GOOD": 3,
-    "FRAME_POOR": 2,
-    "FRAME_DEGRADED": 1,
+    "EXCELLENT": 4,
+    "GOOD": 3,
+    "POOR": 2,
+    "DEGRADED": 1,
 }
 
-# Configure Detectron2
-@st.cache_resource
-def load_model():
-    cfg = get_cfg()
-    cfg.merge_from_file("/workspaces/bike_demo/models/frame_custom_dataset.yaml")  # Update with your config file path
-    cfg.MODEL.WEIGHTS = "/workspaces/bike_demo/models/frame_model_final.pth"
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for predictions
-    cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # Use GPU if available
-    return DefaultPredictor(cfg)
+# Path to the folder containing models
+MODEL_FOLDER = "/workspaces/bike_demo/models"  # Update to your folder path
 
-predictor = load_model()
+# Load all models from the folder
+@st.cache_resource
+def load_models(folder_path):
+    models = {}
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".pth"):
+            # Extract the object name from the filename
+            object_name = filename.split("_model_final.pth")[0]
+            config_file = os.path.join(folder_path, f"{object_name}_custom_dataset.yaml")
+            if os.path.exists(config_file):
+                # Load the model configuration and weights
+                cfg = get_cfg()
+                cfg.merge_from_file(config_file)
+                cfg.MODEL.WEIGHTS = os.path.join(folder_path, filename)
+                cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.3
+                cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+                models[object_name] = DefaultPredictor(cfg)
+
+    return models
+
+models = load_models(MODEL_FOLDER)
+
+if not models:
+    st.error("No models found in the specified folder.")
+    st.stop()
 
 # File uploader
 uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
@@ -40,31 +57,79 @@ if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="Uploaded Image", use_container_width=True)
     
-    # Run prediction
-    st.write("Processing...")
+    # Convert image to numpy array
     img_array = np.array(image)
-    outputs = predictor(img_array)
+    st.write("Processing...")
 
-    # Get predictions and the highest confidence score
-    instances = outputs["instances"]
-    scores = instances.scores.cpu().numpy()
-    classes = instances.pred_classes.cpu().numpy()
+    # Dictionary to store the best prediction for each model
+    predictions = []
 
-    # Get the index of the highest confidence prediction
-    best_prediction_idx = np.argmax(scores)
-    best_score = scores[best_prediction_idx]
-    best_class = classes[best_prediction_idx]
+    for model_name, predictor in models.items():
+        # Run prediction
+        outputs = predictor(img_array)
 
-    # Map class to custom category
-    # Assuming class index corresponds to one of the category_set_correct keys
-    category_mapping = list(category_set_correct.keys())[best_class]
+        # Get predictions and check for empty instances
+        instances = outputs["instances"]
+        if len(instances) == 0:
+            st.warning(f"No predictions made by the model: {model_name}")
+            continue
+
+        scores = instances.scores.cpu().numpy()
+        classes = instances.pred_classes.cpu().numpy()
+
+        if len(scores) > 0:
+            # Get the index of the highest confidence prediction
+            best_prediction_idx = np.argmax(scores)
+            best_score = scores[best_prediction_idx]
+            best_class = classes[best_prediction_idx]
+            
+            # Map class to custom category
+            category_mapping = list(category_set_correct.keys())[best_class]
+
+            # Add the best prediction details to the list
+            predictions.append({
+                "model_name": model_name,
+                "category": category_mapping,
+                "confidence": best_score,
+                # "bbox": instances.pred_boxes[best_prediction_idx].tensor.cpu().numpy()[0]
+                'bbox': instances.pred_boxes.tensor.cpu().numpy()[best_prediction_idx]
+            })
     
-    # Display best prediction
-    st.write(f"Best Prediction: {category_mapping} with Confidence: {best_score:.2f}")
+    if predictions:
+        # Visualize predictions on the image
+        visualizer = Visualizer(img_array[:, :, ::-1], scale=0.8)
+        for prediction in predictions:
+            bbox = prediction["bbox"]
+            category = prediction["category"]
+            confidence = prediction["confidence"]
+            label = f"{category}: {confidence:.2f}"
+            
+            visualizer.draw_box(bbox, edge_color="blue")
+            visualizer.draw_text(label, bbox[:2], font_size=12, color="white")
 
-    # Visualize predictions with the best one highlighted
-    v = Visualizer(img_array[:, :, ::-1], scale=0.8)   #  MetadataCatalog.get(cfg.DATASETS.TRAIN[0]),
-    v = v.draw_instance_predictions(instances[best_prediction_idx:best_prediction_idx+1].to("cpu"))
+        # Display the results
+        visualizer = visualizer.draw_instance_predictions(instances[best_prediction_idx:best_prediction_idx+1].to("cpu"))
+        st.image(visualizer.get_image()[:, :, ::-1], caption="Predictions from All Models", use_container_width=True)
 
-    # Display results
-    st.image(v.get_image()[:, :, ::-1], caption="Predicted Image", use_container_width=True)
+        st.write("Prediction Summary:")
+        processed_predictions = [
+        {
+            "model_name": pred["model_name"].capitalize(),
+            "category": pred["category"].capitalize(),
+            "confidence": round(float(pred["confidence"]), 2),
+        }
+        for pred in predictions
+        ]
+        # Create a DataFrame from the predictions
+        summary_df = pd.DataFrame(processed_predictions)
+        summary_df = summary_df.rename(columns={
+            "model_name": "Model Name",
+            "category": "Category",
+            "confidence": "Confidence"
+        })
+        
+        # Display the DataFrame as a table
+        st.table(summary_df)
+
+    else:
+        st.warning("No predictions made by any model.")
