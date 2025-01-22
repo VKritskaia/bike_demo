@@ -77,7 +77,7 @@ if uploaded_file:
         scores = instances.scores.cpu().numpy()
         classes = instances.pred_classes.cpu().numpy()
 
-        if len(scores) > 0:
+        if len(scores) > 0 and model_name != 'wheels':
             # Get the index of the highest confidence prediction
             best_prediction_idx = np.argmax(scores)
             best_score = scores[best_prediction_idx]
@@ -91,9 +91,28 @@ if uploaded_file:
                 "model_name": model_name,
                 "category": category_mapping,
                 "confidence": best_score,
-                # "bbox": instances.pred_boxes[best_prediction_idx].tensor.cpu().numpy()[0]
                 'bbox': instances.pred_boxes.tensor.cpu().numpy()[best_prediction_idx]
             })
+
+        elif len(scores) > 1 and model_name == 'wheels':
+            # Get indices of the top 2 predictions
+            top_2_indices = np.argsort(scores)[-2:]  # Last two indices with the highest scores
+            top_2_indices = top_2_indices[::-1]      # Sort in descending order
+
+            for idx in top_2_indices:
+                top_score = scores[idx]
+                top_class = classes[idx]
+
+                # Map class to custom category
+                category_mapping = list(category_set_correct.keys())[top_class]
+
+                # Add each of the top 2 predictions to the list
+                predictions.append({
+                    "model_name": model_name,
+                    "category": category_mapping,
+                    "confidence": top_score,
+                    'bbox': instances.pred_boxes.tensor.cpu().numpy()[idx]
+                })
     
     if predictions:
         # Visualize predictions on the image
@@ -116,7 +135,7 @@ if uploaded_file:
         {
             "model_name": pred["model_name"].capitalize(),
             "category": pred["category"].capitalize(),
-            "confidence": round(float(pred["confidence"]), 2),
+            "confidence": f'{round(pred["confidence"]*100)}%',
         }
         for pred in predictions
         ]
